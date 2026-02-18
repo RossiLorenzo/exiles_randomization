@@ -6,6 +6,20 @@ function main(){
   ss.setActiveSheet(ss.getSheetByName("Entry_List"));
 }
 
+/**
+ * Generate teams with a specific seed for reproducible results.
+ * Different seeds produce different valid team assignments.
+ * @param {number} seed - Random seed (any integer)
+ */
+function mainWithSeed(seed) {
+  const ss = SpreadsheetApp.getActive();
+  const payload = buildPayload(ss);
+  payload.seed = seed;
+  const teams = callSolver(payload);
+  writeAssignedTeams(ss, teams.teams);
+  ss.setActiveSheet(ss.getSheetByName("Entry_List"));
+}
+
 function buildPayload(ss) {
 
   const sheet = ss.getSheetByName("Entry_List");

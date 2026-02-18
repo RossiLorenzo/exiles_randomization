@@ -5,7 +5,7 @@ from ortools.linear_solver import pywraplp
 
 app = Flask(__name__)
 
-def solve_holistic(fencers):
+def solve_holistic(fencers, seed=None):
     """
     Solves the team assignment problem using a single holistic MILP model.
     Encodes constraints for:
@@ -14,6 +14,11 @@ def solve_holistic(fencers):
     - Gender constraints (avoid 3M/3F, prefer 2F/1M or 1F/2M)
     - Reserve Rules (Match 2F, Mismatch 1F, No 3M)
     - Objective: Maximize preference (Minimize for All-M)
+
+    Args:
+        fencers: List of fencer dicts with name, category, and preference
+        seed: Optional random seed for reproducible but varied solutions.
+              Different seeds produce different valid solutions.
     """
     solver = pywraplp.Solver.CreateSolver("SCIP") # SCIP is better for non-linear logic / indicators
     if not solver:
@@ -24,6 +29,15 @@ def solve_holistic(fencers):
     n_teams = n_fencers // 3
     if n_teams == 0:
         return {"teams": [], "reserves": fencers} # Not enough for 1 team
+
+    # Initialize random generator for tie-breaking perturbations
+    rng = random.Random(seed)
+
+    # Shuffle fencer indices to vary variable ordering (affects solver exploration)
+    fencer_indices = list(range(n_fencers))
+    rng.shuffle(fencer_indices)
+    # Create mapping from shuffled index to original fencer
+    index_to_fencer = {new_idx: fencer_indices[new_idx] for new_idx in range(n_fencers)}
 
     weapons = ["foil", "epee", "sabre"]
     n_weapons = 3
@@ -126,14 +140,27 @@ def solve_holistic(fencers):
     # Scores: prefs[w] (1-5).
     # "Minimize" for 3M teams -> Contribution = -Score?
     # Or Weight * -Score.
-    
+
     obj_expr = 0
-    
+
     # Penalties/Bonuses constants
     P_3M = 1000 # Penalty for 3M team (try to avoid)
     P_3F = 500  # Penalty for 3F team ("unless strictly necessary")
     B_Res_2F = 200 # Bonus for assigning reserve to 2F team
-    
+
+    # Small perturbation range for tie-breaking (much smaller than preference scores)
+    # This ensures different seeds explore different equally-optimal solutions
+    PERTURBATION_SCALE = 0.01
+
+    # Pre-generate perturbations for each (fencer, team, weapon, role) combination
+    # This ensures reproducibility with the same seed
+    perturbations = {}
+    for i in range(n_fencers):
+        for t in range(n_teams):
+            for w in range(n_weapons):
+                for r in range(2):
+                    perturbations[i, t, w, r] = rng.uniform(-PERTURBATION_SCALE, PERTURBATION_SCALE)
+
     # Let valid_score(i, w) be fencer i's pref for w.
     def get_score(i, w):
         p = fencers[i]["preference"]
@@ -162,25 +189,27 @@ def solve_holistic(fencers):
             for w in range(n_weapons):
                 for r in range(2): # Main and Reserve
                     score = get_score(i, w)
-                    
-                    # We want: 
+                    # Add small random perturbation for tie-breaking
+                    perturbed_score = score + perturbations[i, t, w, r]
+
+                    # We want:
                     # If is_3m[t] is 0: + score * x
                     # If is_3m[t] is 1: - score * x  (Minimizing preference = Maximizing negative preference)
-                    
+
                     # Let z[i,t,w,r] = x[i,t,w,r] AND is_3m[t]
                     z = solver.BoolVar(f"z_{i}_{t}_{w}_{r}")
                     solver.Add(z <= x[i, t, w, r])
                     solver.Add(z <= is_3m[t])
                     solver.Add(z >= x[i, t, w, r] + is_3m[t] - 1)
-                    
+
                     # Term = score * (x - z)  +  (-score) * z
                     #      = score * x - score * z - score * z
                     #      = score * x - 2 * score * z
-                    
+
                     # Note: For reserves on 3M, constraint ban means x=0, so z=0. Term 0. Correct.
-                    
-                    obj_expr += score * x[i, t, w, r]
-                    obj_expr -= 2 * score * z
+
+                    obj_expr += perturbed_score * x[i, t, w, r]
+                    obj_expr -= 2 * perturbed_score * z
 
     solver.Maximize(obj_expr)
 
@@ -220,8 +249,11 @@ def solve_endpoint():
     data = request.get_json()
     if not data or "fencers" not in data:
         return jsonify({"error": "Invalid input"}), 400
-    
-    result = solve_holistic(data["fencers"])
+
+    # Optional seed parameter for reproducible but varied solutions
+    seed = data.get("seed", None)
+
+    result = solve_holistic(data["fencers"], seed=seed)
     return jsonify(result)
 
 if __name__ == '__main__':

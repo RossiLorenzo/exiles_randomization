@@ -1,2 +1,6 @@
 venv
 __pycache__
+
+# Claude AI assistant documentation
+CLAUDE.md
+.claude/
