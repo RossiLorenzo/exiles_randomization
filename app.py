@@ -33,11 +33,10 @@ def solve_holistic(fencers, seed=None):
     # Initialize random generator for tie-breaking perturbations
     rng = random.Random(seed)
 
-    # Shuffle fencer indices to vary variable ordering (affects solver exploration)
-    fencer_indices = list(range(n_fencers))
-    rng.shuffle(fencer_indices)
-    # Create mapping from shuffled index to original fencer
-    index_to_fencer = {new_idx: fencer_indices[new_idx] for new_idx in range(n_fencers)}
+    # Create a copy and shuffle to vary solver exploration
+    # This ensures different seeds produce different variable orderings
+    fencers = fencers.copy()  # Don't modify the original input
+    rng.shuffle(fencers)
 
     weapons = ["foil", "epee", "sabre"]
     n_weapons = 3
